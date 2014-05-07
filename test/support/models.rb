@@ -1,4 +1,4 @@
-Association = Struct.new(:klass, :name, :macro, :options)
+Association = Struct.new(:klass, :name, :macro, :scope, :options)
 
 Column = Struct.new(:name, :type, :limit) do
   # Returns +true+ if the column is either of type integer, float or decimal.
@@ -7,16 +7,36 @@ Column = Struct.new(:name, :type, :limit) do
   end
 end
 
-Relation = Struct.new(:all) do
+Relation = Struct.new(:records) do
+  delegate :each, to: :records
+
   def where(conditions = nil)
-    self.class.new conditions ? all.first : all
+    self.class.new conditions ? records.first : records
   end
 
   def order(conditions = nil)
-    self.class.new conditions ? all.last : all
+    self.class.new conditions ? records.last : records
   end
 
-  alias_method :to_a, :all
+  alias_method :to_a,   :records
+  alias_method :to_ary, :records
+end
+
+Picture = Struct.new(:id, :name) do
+  extend ActiveModel::Naming
+  include ActiveModel::Conversion
+
+  def self.where(conditions = nil)
+    if conditions.is_a?(Hash) && conditions[:name]
+      all.to_a.last
+    else
+      all
+    end
+  end
+
+  def self.all
+    Relation.new((1..3).map { |i| new(i, "#{name} #{i}") })
+  end
 end
 
 Company = Struct.new(:id, :name) do
@@ -28,11 +48,11 @@ Company = Struct.new(:id, :name) do
   end
 
   def self._relation
-    Relation.new(all)
+    all
   end
 
   def self.all
-    (1..3).map { |i| new(i, "#{name} #{i}") }
+    Relation.new((1..3).map { |i| new(i, "#{name} #{i}") })
   end
 
   def persisted?
@@ -53,7 +73,8 @@ class User
     :delivery_time, :born_at, :special_company_id, :country, :tags, :tag_ids,
     :avatar, :home_picture, :email, :status, :residence_country, :phone_number,
     :post_count, :lock_version, :amount, :attempts, :action, :credit_card, :gender,
-    :extra_special_company_id
+    :extra_special_company_id, :pictures, :picture_ids, :special_pictures,
+    :special_picture_ids
 
   def self.build(extra_attributes = {})
     attributes = {
@@ -66,7 +87,7 @@ class User
     new attributes
   end
 
-  def initialize(options={})
+  def initialize(options = {})
     @new_record = false
     options.each do |key, value|
       send("#{key}=", value)
@@ -108,7 +129,7 @@ class User
     Column.new(attribute, column_type, limit)
   end
 
-  def self.human_attribute_name(attribute)
+  def self.human_attribute_name(attribute, options = {})
     case attribute
       when 'name'
         'Super User Name!'
@@ -117,35 +138,39 @@ class User
       when 'company'
         'Company Human Name!'
       else
-        attribute.humanize
+        attribute.to_s.humanize
     end
   end
 
   def self.reflect_on_association(association)
     case association
       when :company
-        Association.new(Company, association, :belongs_to, {})
+        Association.new(Company, association, :belongs_to, nil, {})
       when :tags
-        Association.new(Tag, association, :has_many, {})
+        Association.new(Tag, association, :has_many, nil, {})
       when :first_company
-        Association.new(Company, association, :has_one, {})
+        Association.new(Company, association, :has_one, nil, {})
       when :special_company
-        Association.new(Company, association, :belongs_to, { conditions: { id: 1 } })
+        Association.new(Company, association, :belongs_to, nil, { conditions: { id: 1 } })
       when :extra_special_company
-        Association.new(Company, association, :belongs_to, { conditions: proc { { id: 1 } } })
+        Association.new(Company, association, :belongs_to, nil, { conditions: proc { { id: self.id } } })
+      when :pictures
+        Association.new(Picture, association, :has_many, nil, {})
+      when :special_pictures
+        Association.new(Picture, association, :has_many, proc { where(name: self.name) }, {})
     end
   end
 
   def errors
     @errors ||= begin
-      hash = Hash.new { |h,k| h[k] = [] }
-      hash.merge!(
-        name: ["can't be blank"],
-        description: ["must be longer than 15 characters"],
-        age: ["is not a number", "must be greater than 18"],
-        company: ["company must be present"],
-        company_id: ["must be valid"]
-      )
+      errors = ActiveModel::Errors.new(self)
+      errors.add(:name, "can't be blank")
+      errors.add(:description, 'must be longer than 15 characters')
+      errors.add(:age, 'is not a number')
+      errors.add(:age, 'must be greater than 18')
+      errors.add(:company, 'company must be present')
+      errors.add(:company_id, 'must be valid')
+      errors
     end
   end
 

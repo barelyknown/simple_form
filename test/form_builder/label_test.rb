@@ -29,6 +29,16 @@ class LabelTest < ActionView::TestCase
     assert_select 'label.string.required[for=validating_user_name]', /Name/
   end
 
+  test 'builder should escape label text' do
+    with_label_for @user, :name, label: '<script>alert(1337)</script>', required: false
+    assert_select 'label.string', "&lt;script&gt;alert(1337)&lt;/script&gt;"
+  end
+
+  test 'builder should not escape label text if it is safe' do
+    with_label_for @user, :name, label: '<script>alert(1337)</script>'.html_safe, required: false
+    assert_select 'label.string script', "alert(1337)"
+  end
+
   test 'builder should allow passing options to label tag' do
     with_label_for @user, :name, label: 'My label', id: 'name_label'
     assert_select 'label.string#name_label', /My label/
@@ -63,9 +73,32 @@ class LabelTest < ActionView::TestCase
   end
 
   test 'builder allows label order to be changed' do
-    swap SimpleForm, label_text: lambda { |l, r| "#{l}:" } do
+    swap SimpleForm, label_text: proc { |l, r| "#{l}:" } do
       with_label_for @user, :age
       assert_select 'label.integer[for=user_age]', "Age:"
+    end
+  end
+
+  test 'configuration allow set label text for wrappers' do
+    swap_wrapper :default, self.custom_wrapper_with_label_text do
+      with_concat_form_for(@user) do |f|
+        concat f.input :age
+      end
+      assert_select "label.integer[for=user_age]", "**Age**"
+    end
+  end
+
+  test 'builder should allow custom formatting when label is explicitly specified' do
+    swap SimpleForm, label_text: lambda { |l, r, explicit_label| explicit_label ? l : "#{l.titleize}:" } do
+      with_label_for @user, :time_zone, 'What is your home time zone?'
+      assert_select 'label[for=user_time_zone]', 'What is your home time zone?'
+    end
+  end
+
+  test 'builder should allow custom formatting when label is generated' do
+    swap SimpleForm, label_text: lambda { |l, r, explicit_label| explicit_label ? l : "#{l.titleize}:" } do
+      with_label_for @user, :time_zone
+      assert_select 'label[for=user_time_zone]', 'Time Zone:'
     end
   end
 end
